@@ -1,6 +1,8 @@
 from multiprocessing import Process, Lock, Queue, cpu_count
 from bs4 import BeautifulSoup
+from functools import partial
 import urllib.request
+import pebble
 import time
 
 visited_links = set()
@@ -110,23 +112,24 @@ def find_url_route(start_url, end_url, route_max_length):
 
     visited_links.add(start_url)
 
-    for link in wikipedia_links:
-        if (link == end_url):
-            return [start_url, end_url]
+    if end_url in wikipedia_links:
+        return [start_url, end_url]
 
-        if (route_max_length > 2):
-            if (link in visited_links):
-                continue
+    if (route_max_length == 2):
+        return []
+
+    for link in wikipedia_links:
+        if (link in visited_links):
+            continue
             
-            route = find_url_route(link, end_url, route_max_length - 1)
-            if (route):
-                main_route.extend(route)
-                return main_route
+        route = find_url_route(link, end_url, route_max_length - 1)
+        if (route):
+            main_route.extend(route)
+            return main_route
 
     return []
 
 def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_length):
-    return []
     if end_url in start_url_list:
         return [end_url]
     
@@ -141,47 +144,6 @@ def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_leng
             break
 
     return route
-
-class MultiProcessor():
-
-    def __init__(self):
-        self.processes = []
-        self.queue = Queue()
-
-    @staticmethod
-    def _wrapper(func, queue, args, kwargs):
-        result = func(*args, **kwargs)
-        queue.put(result)
-
-    def run(self, func, *args, **kwargs):
-        args2 = [func, self.queue, args, kwargs]
-        process = Process(target=self._wrapper, args=args2)
-        self.processes.append(process)
-        process.start()
-
-    def wait_for_all_results(self):
-        results = []
-        for process in self.processes:
-            result = self.queue.get()
-            results.append(result)
-        for process in self.processes:
-            process.join()
-        return results
-
-    def wait_for_one_result(self):
-        result = []
-        print(1)
-        for process in self.processes:
-            print(2)
-            result = self.queue.get()
-            print(3)
-            if (result):
-                break
-
-        for process in self.processes:
-            if (process.is_alive()):
-                process.terminate()
-        return result
 
 def multiprocess_find_url_route(start_url, end_url, route_max_length):
     if (start_url == end_url):
@@ -200,18 +162,25 @@ def multiprocess_find_url_route(start_url, end_url, route_max_length):
 
     cores_count = cpu_count()
 
-    multiprocessor = MultiProcessor()
-
+    wikipedia_links_sublists = []
     for thread_index in range(cores_count):
         wikipedia_links_sublist = []
         wikipedia_links_index = thread_index
         while (wikipedia_links_index < len(wikipedia_links)):
             wikipedia_links_sublist.append(wikipedia_links[wikipedia_links_index])
             wikipedia_links_index += cores_count
-        
-        multiprocessor.run(find_url_route_for_one_url_from_list, [wikipedia_links_sublist, end_url, route_max_length - 1]);
+        wikipedia_links_sublists.append(wikipedia_links_sublist)
 
-    route = multiprocessor.wait_for_one_result()
+    route = []
+    with pebble.ProcessPool() as executor:
+        future_to_url = executor.map(partial(find_url_route_for_one_url_from_list, end_url = end_url, route_max_length = route_max_length - 1), [links_sublist for links_sublist in wikipedia_links_sublists])
+        for future in future_to_url.result():
+            route = future
+            if (route):
+                finished = True
+                executor.stop()
+                break
+
     if (route):
         main_route.extend(route)
     else:
@@ -230,4 +199,5 @@ def main():
     else:
         print("There are no routes for these urls.")
 
-main()
+if __name__ == '__main__':
+    main()
