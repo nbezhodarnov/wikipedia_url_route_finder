@@ -1,11 +1,9 @@
-from multiprocessing import Process, Lock, Queue, cpu_count
+from multiprocessing import Lock, cpu_count
 from bs4 import BeautifulSoup
 from functools import partial
 import urllib.request
 import pebble
 import time
-
-visited_links = set()
 
 class AtomicInteger():
     def __init__(self, value=0):
@@ -97,7 +95,7 @@ def get_wikipedia_links_from_url(url):
     wikipedia_links = get_wikipedia_links_in_same_language(wikipedia_page_main_content, wikipedia_page_language)
     return wikipedia_links
 
-def find_url_route(start_url, end_url, route_max_length):
+def find_url_route(start_url, end_url, route_max_length, visited_links = []):
     if (start_url == end_url):
         return [start_url]
     if (route_max_length <= 1):
@@ -110,7 +108,7 @@ def find_url_route(start_url, end_url, route_max_length):
     except Exception as exception:
         return []
 
-    visited_links.add(start_url)
+    visited_links.append(start_url)
 
     if end_url in wikipedia_links:
         return [start_url, end_url]
@@ -122,14 +120,14 @@ def find_url_route(start_url, end_url, route_max_length):
         if (link in visited_links):
             continue
             
-        route = find_url_route(link, end_url, route_max_length - 1)
+        route = find_url_route(link, end_url, route_max_length - 1, visited_links)
         if (route):
             main_route.extend(route)
             return main_route
 
     return []
 
-def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_length):
+def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_length, visited_links = []):
     if end_url in start_url_list:
         return [end_url]
     
@@ -139,7 +137,7 @@ def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_leng
     route = []
 
     for url in start_url_list:
-        route = find_url_route(url, end_url, route_max_length)
+        route = find_url_route(url, end_url, route_max_length, visited_links)
         if (route):
             break
 
@@ -157,8 +155,11 @@ def multiprocess_find_url_route(start_url, end_url, route_max_length):
         wikipedia_links = get_wikipedia_links_from_url(start_url)
     except Exception as exception:
         return []
+    
+    if end_url in wikipedia_links:
+        return [start_url, end_url]
 
-    visited_links.add(start_url)
+    visited_links = [start_url]
 
     cores_count = cpu_count()
 
@@ -172,12 +173,11 @@ def multiprocess_find_url_route(start_url, end_url, route_max_length):
         wikipedia_links_sublists.append(wikipedia_links_sublist)
 
     route = []
-    with pebble.ProcessPool() as executor:
-        future_to_url = executor.map(partial(find_url_route_for_one_url_from_list, end_url = end_url, route_max_length = route_max_length - 1), [links_sublist for links_sublist in wikipedia_links_sublists])
+    with pebble.ProcessPool(max_workers = cores_count) as executor:
+        future_to_url = executor.map(partial(find_url_route_for_one_url_from_list, end_url = end_url, route_max_length = route_max_length - 1, visited_links = visited_links), [links_sublist for links_sublist in wikipedia_links_sublists])
         for future in future_to_url.result():
             route = future
             if (route):
-                finished = True
                 executor.stop()
                 break
 
