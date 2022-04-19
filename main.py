@@ -2,6 +2,7 @@ from multiprocessing import Lock, cpu_count
 from bs4 import BeautifulSoup
 from functools import partial
 import urllib.request
+import argparse
 import pebble
 import time
 
@@ -189,9 +190,37 @@ def multiprocess_find_url_route(start_url, end_url, route_max_length):
     return main_route
 
 def main():
-    start_url = input("Input start url: ")
-    end_url = input("Input end url: ")
-    RATE_LIMIT = input("Input rate-limit: ")
+    parser = argparse.ArgumentParser(description = "Wikipedia url route finder. This program could find a route from one url in wikipedia to another. Links must be in same language.", exit_on_error = False)
+    parser.add_argument("start_url", metavar = "start_url", help = "url from which the search will begin", nargs='?', default = "")
+    parser.add_argument("end_url", metavar = "end_url", help = "destination url, where the search must be finished", nargs='?', default = "")
+    parser.add_argument("rate_limit", metavar = "rate_limit", type = int, help = "number of connections that could be at the same time", nargs='?', default = 10)
+    try:
+        arguments = parser.parse_args()
+    except argparse.ArgumentError:
+        print("Unable to read arguments. You will be asked for them.")
+    
+    start_url = arguments.start_url
+    end_url = arguments.end_url
+    RATE_LIMIT = arguments.rate_limit
+    
+    are_arguments_unset = False
+    
+    if (start_url == ""):
+        are_arguments_unset = True
+        start_url = input("Input start url: ")
+    
+    if (end_url == ""):
+        are_arguments_unset = True
+        end_url = input("Input end url: ")
+
+    while (extract_wikipedia_page_language(start_url) != extract_wikipedia_page_language(end_url)):
+        print("Languages of start_url and end_url are different! Please, use an url in same language (" + extract_wikipedia_page_language(start_url) + ")")
+        end_url = input("Input end url: ")
+
+    
+    if (are_arguments_unset):
+        RATE_LIMIT = input("Input rate-limit: ")
+
     route = multiprocess_find_url_route(start_url, end_url, 5)
     if (route):
         print("Url route: ")
