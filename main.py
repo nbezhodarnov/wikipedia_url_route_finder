@@ -1,17 +1,21 @@
-from multiprocessing import Manager, Semaphore, Queue, cpu_count
-import queue
 from bs4 import BeautifulSoup
 from functools import partial
 import urllib.request
 import argparse
 import pebble
+import queue
+import time
 
+class LastConnectionTime:
+    value = time.time()
 RATE_LIMIT = 10
-connections_semaphore = Semaphore()
 
 def safe_url_request(url):
-    with connections_semaphore:
-        url_data = urllib.request.urlopen(url).read()
+    time_delay = LastConnectionTime.value - time.time() + 60 / RATE_LIMIT
+    if (time_delay > 0):
+        time.sleep(time_delay)
+    url_data = urllib.request.urlopen(url).read()
+    LastConnectionTime.value = time.time()
     return url_data
 
 def extract_wikipedia_main_content(html_page):
@@ -101,7 +105,7 @@ def find_url_route(start_url, end_url, route_max_length, visited_links = []):
 def search_url_route_in_queue(queue, end_url, route_max_length, visited_links):
     main_route = []
 
-    while queue:
+    while not queue.empty():
         route = queue.get()
         if (not route or len(route) >= route_max_length):
             continue
@@ -136,117 +140,11 @@ def find_url_route_bfs(start_url, end_url, route_max_length):
 
     return search_url_route_in_queue(links_queue, end_url, route_max_length, visited_links)
 
-def find_url_route_for_one_url_from_list(start_url_list, end_url, route_max_length, visited_links = []):
-    if end_url in start_url_list:
-        return [end_url]
-    
-    if (route_max_length <= 1):
-        return []
-
-    route = []
-
-    for url in start_url_list:
-        route = find_url_route(url, end_url, route_max_length, visited_links)
-        if (route):
-            break
-
-    return route
-
-def multiprocess_find_url_route(start_url, end_url, route_max_length):
-    if (start_url == end_url):
-        return [end_url]
-    if (route_max_length <= 1):
-        return []
-
-    main_route = [start_url]
-
-    try:
-        wikipedia_links = get_wikipedia_links_from_url(start_url)
-    except Exception as exception:
-        return []
-    
-    if end_url in wikipedia_links:
-        return [start_url, end_url]
-
-    visited_links = [start_url]
-
-    cores_count = cpu_count()
-
-    wikipedia_links_sublists = []
-    for thread_index in range(cores_count):
-        wikipedia_links_sublist = []
-        wikipedia_links_index = thread_index
-        while (wikipedia_links_index < len(wikipedia_links)):
-            wikipedia_links_sublist.append(wikipedia_links[wikipedia_links_index])
-            wikipedia_links_index += cores_count
-        wikipedia_links_sublists.append(wikipedia_links_sublist)
-
-    route = []
-    with pebble.ProcessPool(max_workers = cores_count) as executor:
-        future_to_url = executor.map(partial(find_url_route_for_one_url_from_list, end_url = end_url, route_max_length = route_max_length - 1, visited_links = visited_links), [links_sublist for links_sublist in wikipedia_links_sublists])
-        for future in future_to_url.result():
-            route = future
-            if (route):
-                executor.stop()
-                break
-
-    if (route):
-        main_route.extend(route)
-    else:
-        main_route = []
-
-    return main_route
-
-def multiprocess_find_url_route_bfs(start_url, end_url, route_max_length):
-    if (start_url == end_url):
-        return [end_url]
-    if (route_max_length <= 1):
-        return []
-
-    main_route = []
-
-    try:
-        wikipedia_links = get_wikipedia_links_from_url(start_url)
-    except Exception as exception:
-        return []
-    
-    if end_url in wikipedia_links:
-        return [start_url, end_url]
-
-    visited_links = []
-    visited_links.append(start_url)
-    visited_links.extend(wikipedia_links)
-
-    cores_count = cpu_count()
-
-    manager = Manager()
-    links_queues = []
-    for thread_index in range(cores_count):
-        links_queues.append(manager.Queue())
-        wikipedia_links_index = thread_index
-        while (wikipedia_links_index < len(wikipedia_links)):
-            links_queues[thread_index].put([start_url, wikipedia_links[wikipedia_links_index]])
-            wikipedia_links_index += cores_count
-
-    route = []
-    with pebble.ProcessPool(max_workers = cores_count) as executor:
-        future_to_url = executor.map(partial(search_url_route_in_queue, end_url = end_url, route_max_length = route_max_length - 1, visited_links = visited_links), [ links_queue for links_queue in links_queues])
-        for future in future_to_url.result():
-            route = future
-            if (route):
-                executor.stop()
-                break
-
-    if (route):
-        main_route = route
-
-    return main_route
-
 def main():
     parser = argparse.ArgumentParser(description = "Wikipedia url route finder. This program could find a route from one url in wikipedia to another. Links must be in same language.", exit_on_error = False)
     parser.add_argument("start_url", metavar = "start_url", help = "url from which the search will begin", nargs='?', default = "")
     parser.add_argument("end_url", metavar = "end_url", help = "destination url, where the search must be finished", nargs='?', default = "")
-    parser.add_argument("rate_limit", metavar = "rate_limit", type = int, help = "number of connections that could be at the same time", nargs='?', default = 10)
+    parser.add_argument("rate_limit", metavar = "rate_limit", type = int, help = "number of connections that could be per minute", nargs='?', default = 10)
     try:
         arguments = parser.parse_args()
     except argparse.ArgumentError:
@@ -273,10 +171,12 @@ def main():
     
     if (are_arguments_unset):
         RATE_LIMIT = int(input("Input rate-limit: "))
+    
+    while (RATE_LIMIT <= 0):
+        print("Value rate-limit must be positive!")
+        RATE_LIMIT = int(input("Input rate-limit: "))
 
-    connections_semaphore = Semaphore(RATE_LIMIT)
-
-    route = multiprocess_find_url_route_bfs(start_url, end_url, 5)
+    route = find_url_route_bfs(start_url, end_url, 5)
     if (route):
         print("Url route: ")
         print(*route, sep=" => ")
