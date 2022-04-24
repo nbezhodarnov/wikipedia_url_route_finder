@@ -23,9 +23,12 @@ def force_to_set_nonempty_url(url, message, print_error_message_first_time = Fal
         url_modified = True
     return url, url_modified
 
-def force_to_set_wikipedia_url(url, message, print_error_message_first_time = True):
+def force_to_set_wikipedia_url(url, message, print_error_message_first_time = False):
     url_modified = False
     print_error_message = print_error_message_first_time
+    if (url and not wikipedia_module.is_wikipedia_url(url)):
+            print("It must be wikipedia url!")
+            print_error_message = False
     while (not wikipedia_module.is_wikipedia_url(url)):
         if (print_error_message):
             print("It must be wikipedia url!")
@@ -45,8 +48,8 @@ def force_to_set_wikipedia_urls_in_same_language(url1, url2, message1, message2,
         else:
             print_error_message = True
         url1, url2 = "", ""
-        url1, url_modified = force_to_set_wikipedia_url(url1, message1, False)
-        url2, url_modified = force_to_set_wikipedia_url(url2, message2, False)
+        url1, url_modified = force_to_set_wikipedia_url(url1, message1)
+        url2, url_modified = force_to_set_wikipedia_url(url2, message2)
         urls_modified = True
     return url1, url2, urls_modified
 
